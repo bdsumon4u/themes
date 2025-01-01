@@ -2,28 +2,28 @@
 
 namespace DevDojo\Themes;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use TCG\Voyager\Models\Menu;
-use TCG\Voyager\Models\Role;
-use TCG\Voyager\Models\MenuItem;
+use DevDojo\Themes\Models\Theme;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
-use TCG\Voyager\Models\Permission;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Cookie;
-use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Blade;
 use Laravel\Folio\Folio;
-use Illuminate\Support\Facades\File;
+use TCG\Voyager\Models\Menu;
+use TCG\Voyager\Models\MenuItem;
+use TCG\Voyager\Models\Permission;
+use TCG\Voyager\Models\Role;
 
 class ThemesServiceProvider extends ServiceProvider
 {
     private $models = [
-            'Theme',
-            'ThemeOptions',
-        ];
+        'Theme',
+        'ThemeOptions',
+    ];
 
     /**
      * Register is loaded every time the voyager themes hook is used.
@@ -32,13 +32,12 @@ class ThemesServiceProvider extends ServiceProvider
      */
     public function register()
     {
-        if ( app()->runningInConsole() ) {
-
+        if (app()->runningInConsole()) {
             try {
                 DB::connection()->getPdo();
                 $this->addThemesTable();
             } catch (\Exception $e) {
-                \Log::error("Error connecting to database: ".$e->getMessage());
+                Log::error('Error connecting to database: '.$e->getMessage());
             }
 
             app(Dispatcher::class)->listen('voyager.menu.display', function ($menu) {
@@ -64,23 +63,12 @@ class ThemesServiceProvider extends ServiceProvider
      */
     public function boot()
     {
-        try{
-
-        //    dd(config('themes.folder'));
-
-            //$this->loadViewsFrom(config('themes.folder'), 'themes');
-
+        try {
             $theme = '';
 
             if (Schema::hasTable('themes')) {
-                $theme = $this->rescue(function () {
-                    return \DevDojo\Themes\Models\Theme::where('active', '=', 1)->first();
-                });
-                if(Cookie::get('theme')){
-                    $theme_cookied = \DevDojo\Themes\Models\Theme::where('folder', '=', Cookie::get('theme'))->first();
-                    if(isset($theme_cookied->id)){
-                        $theme = $theme_cookied;
-                    }
+                if (! $theme = Theme::where('folder', '=', Cookie::get('theme'))->first()) {
+                    $theme = Theme::where('active', '=', 1)->first();
                 }
             }
 
@@ -88,25 +76,20 @@ class ThemesServiceProvider extends ServiceProvider
 
             $folder = config('themes.folder', resource_path('themes'));
 
-            $this->loadDynamicMiddleware($folder, $theme);
-            $this->registerThemeComponents($theme);
-            $this->registerThemeFolioDirectory($theme);
-
             // Make sure we have an active theme
-            if (isset($theme)) {
+            if (! empty($theme)) {
+                $this->loadDynamicMiddleware($folder, $theme);
+                $this->registerThemeComponents($theme);
+                $this->registerThemeFolioDirectory($theme);
                 $this->loadViewsFrom($folder.'/'.@$theme->folder, 'theme');
             }
-            //$this->loadViewsFrom($folder, 'themes_folder');
-
-        } catch(\Exception $e){
+        } catch (\Exception $e) {
             return $e->getMessage();
         }
     }
 
     /**
      * Admin theme routes.
-     *
-     * @param $router
      */
     public function addThemeRoutes($router)
     {
@@ -121,14 +104,16 @@ class ThemesServiceProvider extends ServiceProvider
         $router->delete('themes/delete', ['uses' => $namespacePrefix.'ThemesController@delete', 'as' => 'theme.delete']);
     }
 
-    private function registerThemeComponents($theme){
-        Blade::anonymousComponentPath(config('themes.folder') . '/' . $theme->folder . '/components/elements');
-        Blade::anonymousComponentPath(config('themes.folder') . '/' . $theme->folder . '/components');
+    private function registerThemeComponents($theme)
+    {
+        Blade::anonymousComponentPath(config('themes.folder').'/'.$theme->folder.'/components/elements');
+        Blade::anonymousComponentPath(config('themes.folder').'/'.$theme->folder.'/components');
     }
 
-    private function registerThemeFolioDirectory($theme){
-        if (File::exists( config('themes.folder') . '/' . $theme->folder . '/pages')) {
-            Folio::path( config('themes.folder') . '/' . $theme->folder . '/pages')->middleware([
+    private function registerThemeFolioDirectory($theme)
+    {
+        if (File::exists(config('themes.folder').'/'.$theme->folder.'/pages')) {
+            Folio::path(config('themes.folder').'/'.$theme->folder.'/pages')->middleware([
                 '*' => [
                     //
                 ],
@@ -139,7 +124,7 @@ class ThemesServiceProvider extends ServiceProvider
     /**
      * Adds the Theme icon to the admin menu.
      *
-     * @param TCG\Voyager\Models\Menu $menu
+     * @param  TCG\Voyager\Models\Menu  $menu
      */
     public function addThemeMenuItem(Menu $menu)
     {
@@ -175,27 +160,25 @@ class ThemesServiceProvider extends ServiceProvider
             'key' => 'browse_themes',
             'table_name' => 'admin',
         ]);
-        if (!$permission->exists) {
+        if (! $permission->exists) {
             $permission->save();
             $role = Role::where('name', 'admin')->first();
-            if (!is_null($role)) {
+            if (! is_null($role)) {
                 $role->permissions()->attach($permission);
             }
         }
     }
 
-    private function loadDynamicMiddleware($folder, $theme){
-        if (empty($theme)) {
-            return;
-        }
-        $middleware_folder = $folder . '/' . $theme->folder . '/middleware';
-        if(file_exists( $middleware_folder )){
+    private function loadDynamicMiddleware($theme)
+    {
+        $middleware_folder = config('themes.folder').'/'.$theme->folder.'/middleware';
+        if (file_exists($middleware_folder)) {
             $middleware_files = scandir($middleware_folder);
-            foreach($middleware_files as $middleware){
-                if($middleware != '.' && $middleware != '..'){
-                    include($middleware_folder . '/' . $middleware);
-                    $middleware_classname = 'Themes\\Middleware\\' . str_replace('.php', '', $middleware);
-                    if(class_exists($middleware_classname)){
+            foreach ($middleware_files as $middleware) {
+                if ($middleware != '.' && $middleware != '..') {
+                    include $middleware_folder.'/'.$middleware;
+                    $middleware_classname = 'Themes\\Middleware\\'.str_replace('.php', '', $middleware);
+                    if (class_exists($middleware_classname)) {
                         // Dynamically Load The Middleware
                         $this->app->make('Illuminate\Contracts\Http\Kernel')->prependMiddleware($middleware_classname);
                     }
@@ -209,7 +192,7 @@ class ThemesServiceProvider extends ServiceProvider
      */
     private function addThemesTable()
     {
-        if (!Schema::hasTable('themes') && config('themes.create_tables')) {
+        if (! Schema::hasTable('themes') && config('themes.create_tables')) {
             Schema::create('themes', function (Blueprint $table) {
                 $table->increments('id');
                 $table->string('name');
@@ -227,19 +210,6 @@ class ThemesServiceProvider extends ServiceProvider
                 $table->text('value')->nullable();
                 $table->timestamps();
             });
-        }
-    }
-
-    // Duplicating the rescue function that's available in 5.5, just in case
-    // A user wants to use this hook with 5.4
-
-    function rescue(callable $callback, $rescue = null)
-    {
-        try {
-            return $callback();
-        } catch (Throwable $e) {
-            report($e);
-            return value($rescue);
         }
     }
 }
